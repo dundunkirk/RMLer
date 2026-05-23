@@ -48,31 +48,28 @@ The repository includes training scripts for multiple diffusion backbones:
 ```text
 RMLer/
 |-- checkpoints/
-|-- data/
-|   |-- dataset/
-|   `-- metadata/
-|       |-- Cretok.txt
-|       `-- ImageNet-200.txt
+|-- dataset/
 |-- docs/
 |-- outputs/
 |-- prompts/
-|-- rmler/
-|   |-- __init__.py
-|   |-- metric/
-|   `-- pipeline/
+|   |-- Cretok.txt
+|   `-- ImageNet-200.txt
 |-- scripts/
+|   |-- preprocess/
+|   |   `-- generate_reference_images.py
 |   |-- train/
-|   |   |-- save.py
-|   |   |-- pipeline-ppo-sd-v1-4.py
-|   |   |-- pipeline-ppo-sd-v1-5.py
-|   |   `-- pipeline-ppo-sd-v2-1.py
+|   |   |-- train_sdxl_turbo.py
+|   |   `-- other_pipeline_example/
+|   |       |-- pipeline-ppo-sd-v1-4.py
+|   |       |-- pipeline-ppo-sd-v1-5.py
+|   |       `-- pipeline-ppo-sd-v2-1.py
 |   |-- infer/
-|   |   `-- save_infer.py
+|   |   `-- infer_sdxl_turbo.py
 |   |-- eval/
-|   |   |-- 0-param-hpsv2.py
-|   |   `-- 0-param-vqascore.py
+|   |   |-- evaluate_hpsv2.py
+|   |   `-- evaluate_vqascore.py
 |   `-- postprocess/
-|       `-- 0-select_top_k_0801.py
+|       `-- select_top_k_images.py
 `-- README.md
 ```
 
@@ -83,8 +80,9 @@ Scripts resolve paths relative to the repository root by default.
 Default locations:
 
 - `checkpoints/`: local model checkpoints
-- `data/dataset/`: source concept images
-- `prompts/prompt.txt`: prompt pairs
+- `dataset/`: source concept images
+- `prompts/Cretok.txt`: default prompt-pair file
+- `prompts/ImageNet-200.txt`: alternative prompt-pair file
 - `outputs/`: generated images, logs, policy weights, and selected samples
 
 Environment variables can override these defaults:
@@ -94,7 +92,7 @@ Environment variables can override these defaults:
 | `RMLER_CHECKPOINT_DIR` | Base directory for local checkpoints |
 | `RMLER_DATASET_DIR` | Dataset directory |
 | `RMLER_OUTPUT_DIR` | Output directory |
-| `RMLER_PROMPT_FILE` | Prompt-pair file |
+| `RMLER_PROMPT_FILE` | Prompt-pair file used by SD v1.4/v1.5/v2.1 scripts |
 | `RMLER_CLIP_MODEL` | CLIP model path |
 | `RMLER_SDXL_TURBO_MODEL` | SDXL-Turbo model path |
 | `RMLER_SD14_MODEL` | Stable Diffusion v1.4 model path |
@@ -104,32 +102,46 @@ Environment variables can override these defaults:
 
 ## Script Entry Points
 
+### Preprocessing
+
+Generate reference images for each unique concept in a prompt-pair file. These images are saved as `dataset/<concept>/output_0.png` and are used by later reward computation and evaluation steps.
+
+```bash
+python scripts/preprocess/generate_reference_images.py
+```
+
+Use a different prompt list:
+
+```bash
+python scripts/preprocess/generate_reference_images.py --prompt-file prompts/ImageNet-200.txt
+```
+
 ### Training
 
 ```bash
-python scripts/train/save.py
-python scripts/train/pipeline-ppo-sd-v1-4.py
-python scripts/train/pipeline-ppo-sd-v1-5.py
-python scripts/train/pipeline-ppo-sd-v2-1.py
+python scripts/train/train_sdxl_turbo.py
+python scripts/train/other_pipeline_example/pipeline-ppo-sd-v1-4.py
+python scripts/train/other_pipeline_example/pipeline-ppo-sd-v1-5.py
+python scripts/train/other_pipeline_example/pipeline-ppo-sd-v2-1.py
 ```
 
 ### Inference
 
 ```bash
-python scripts/infer/save_infer.py
+python scripts/infer/infer_sdxl_turbo.py
 ```
 
 ### Evaluation
 
 ```bash
-python scripts/eval/0-param-hpsv2.py
-python scripts/eval/0-param-vqascore.py
+python scripts/eval/evaluate_hpsv2.py
+python scripts/eval/evaluate_vqascore.py
 ```
 
 ### Post-processing
 
 ```bash
-python scripts/postprocess/0-select_top_k_0801.py
+python scripts/postprocess/select_top_k_images.py
 ```
 
 ## Expected Input Layout
@@ -137,17 +149,29 @@ python scripts/postprocess/0-select_top_k_0801.py
 For reward computation, source concept images are expected in:
 
 ```text
-data/dataset/
+dataset/
 |-- concept_a/
 |   `-- output_0.png
 `-- concept_b/
     `-- output_0.png
 ```
 
-For SD v1.4, v1.5, and v2.1 scripts, prompt pairs are expected in:
+You can create this layout automatically with:
+
+```bash
+python scripts/preprocess/generate_reference_images.py
+```
+
+For SD v1.4, v1.5, and v2.1 scripts, prompt pairs are read from the file configured by `RMLER_PROMPT_FILE`. By default, the scripts look for:
 
 ```text
-prompts/prompt.txt
+prompts/Cretok.txt
+```
+
+This repository currently provides another prompt list:
+
+```text
+prompts/ImageNet-200.txt
 ```
 
 Each line should contain one pair separated by `&`, for example:

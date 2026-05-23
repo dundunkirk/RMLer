@@ -21,11 +21,11 @@ from typing import Optional, Union, List, Tuple
 
 from tqdm import tqdm
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CHECKPOINT_DIR = Path(os.environ.get("RMLER_CHECKPOINT_DIR", str(PROJECT_ROOT / "checkpoints")))
-DATASET_DIR = Path(os.environ.get("RMLER_DATASET_DIR", str(PROJECT_ROOT / "data" / "dataset")))
+DATASET_DIR = Path(os.environ.get("RMLER_DATASET_DIR", str(PROJECT_ROOT / "dataset")))
 OUTPUT_DIR = Path(os.environ.get("RMLER_OUTPUT_DIR", str(PROJECT_ROOT / "outputs")))
-PROMPT_FILE = Path(os.environ.get("RMLER_PROMPT_FILE", str(PROJECT_ROOT / "prompts" / "prompt.txt")))
+PROMPT_FILE = Path(os.environ.get("RMLER_PROMPT_FILE", str(PROJECT_ROOT / "prompts" / "Cretok.txt")))
 CLIP_MODEL_PATH = os.environ.get(
     "RMLER_CLIP_MODEL",
     str(CHECKPOINT_DIR / "CLIP-ViT-H-14-laion2B-s32B-b79K"),

@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionXLPipeline
 from transformers import AutoModel, CLIPModel, CLIPProcessor, AutoModelForImageSegmentation
 
 import inspect
@@ -23,16 +23,15 @@ from tqdm import tqdm
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DIR = Path(os.environ.get("RMLER_CHECKPOINT_DIR", str(PROJECT_ROOT / "checkpoints")))
-DATASET_DIR = Path(os.environ.get("RMLER_DATASET_DIR", str(PROJECT_ROOT / "data" / "dataset")))
+DATASET_DIR = Path(os.environ.get("RMLER_DATASET_DIR", str(PROJECT_ROOT / "dataset")))
 OUTPUT_DIR = Path(os.environ.get("RMLER_OUTPUT_DIR", str(PROJECT_ROOT / "outputs")))
-PROMPT_FILE = Path(os.environ.get("RMLER_PROMPT_FILE", str(PROJECT_ROOT / "prompts" / "prompt.txt")))
 CLIP_MODEL_PATH = os.environ.get(
     "RMLER_CLIP_MODEL",
     str(CHECKPOINT_DIR / "CLIP-ViT-H-14-laion2B-s32B-b79K"),
 )
-SD21_MODEL_PATH = os.environ.get(
-    "RMLER_SD21_MODEL",
-    str(CHECKPOINT_DIR / "stable-diffusion-2-1-base"),
+SDXL_TURBO_MODEL_PATH = os.environ.get(
+    "RMLER_SDXL_TURBO_MODEL",
+    str(CHECKPOINT_DIR / "sdxl-turbo"),
 )
 
 def denormalize(images: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
@@ -106,11 +105,12 @@ def retrieve_timesteps(
         timesteps = scheduler.timesteps
     return timesteps, num_inference_steps
 
-def self_pipe(latents, pipeline, device, prompt_embeds, guidance_scale=7.5):
-    do_classifier_free_guidance = guidance_scale > 1.0
+def self_pipe(latents, pipeline, device, prompt_embeds, pooled_prompt_embeds):
+    do_classifier_free_guidance = False
     height = 512    
     width = 512
-    num_inference_steps = 50
+    num_inference_steps = 4
+    guidance_scale = 0
     clip_skip = None
     joint_attention_kwargs = None
     _interrupt = False
@@ -119,12 +119,7 @@ def self_pipe(latents, pipeline, device, prompt_embeds, guidance_scale=7.5):
 
     if pipeline is not None:
         pipe = pipeline
-    
-    # 参考SD1.4 pipeline的timesteps处理
-    timesteps, num_inference_steps = retrieve_timesteps(
-        pipe.scheduler, num_inference_steps, device, None, None
-    )
-
+    timesteps, num_inference_steps = retrieve_timesteps(pipe.scheduler, num_inference_steps, device, timesteps=None)
 
     num_channels_latents = pipe.unet.config.in_channels
 
@@ -139,73 +134,59 @@ def self_pipe(latents, pipeline, device, prompt_embeds, guidance_scale=7.5):
                     None,
                     None,
                 )
-    
-    # 确保latents在正确的设备上
-    latents = latents.to(device)
-    
-    # 参考SD1.4 pipeline的extra_step_kwargs处理
     extra_step_kwargs = pipe.prepare_extra_step_kwargs(None, 0.0)
 
-    # 处理classifier-free guidance
-    if do_classifier_free_guidance:
-        # 确保prompt_embeds包含uncond和cond两部分
-        if prompt_embeds.shape[0] == 1:
-            # 如果只有cond embeddings，需要添加uncond embeddings
-            uncond_embeddings = pipe.encode_prompt(
-                prompt="",
-                num_images_per_prompt=num_images_per_prompt,
-                do_classifier_free_guidance=True,
-                device=device
-            )[0]
-            prompt_embeds = torch.cat([uncond_embeddings, prompt_embeds])
-        # 现在prompt_embeds应该是[batch_size * 2, seq_len, hidden_size]
-        prompt_embeds = prompt_embeds.to(device)
-    else:
-        prompt_embeds = prompt_embeds.to(device)
+    add_text_embeds = pooled_prompt_embeds
 
-    # 参考SD1.4 pipeline的warmup_steps计算
-    num_warmup_steps = len(timesteps) - num_inference_steps * pipe.scheduler.order
+    text_encoder_projection_dim = pipe.text_encoder_2.config.projection_dim
 
-    with pipe.progress_bar(total=num_inference_steps) as progress_bar:
-        # 参考SD1.4 pipeline的denoising loop
-        for i, t in enumerate(timesteps):
-            # 根据用户实现，将t转换为tensor
-            t = torch.tensor([t], dtype=latents.dtype, device=latents.device)
-            t = t.repeat(batch_size * num_images_per_prompt)
-            
-            # 确保latents的维度正确
-            latent_model_input = latents
-            if do_classifier_free_guidance:
-                # 在classifier-free guidance时，需要重复latents
-                latent_model_input = latent_model_input.repeat(2, 1, 1, 1)
-            latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, t)
+    add_time_ids = pipe._get_add_time_ids(
+                (height, width),
+                (0, 0),
+                (height, width),
+                dtype=prompt_embeds.dtype,
+                text_encoder_projection_dim=text_encoder_projection_dim,
+            )
+    negative_add_time_ids = add_time_ids
 
-            # predict the noise residual
-            noise_pred = pipe.unet(
-                latent_model_input,
-                t,
-                encoder_hidden_states=prompt_embeds,
-                timestep_cond=None,
-                cross_attention_kwargs=None,
-                return_dict=False,
-            )[0]
+    prompt_embeds = prompt_embeds.to(device)
+    add_text_embeds = add_text_embeds.to(device)
+    add_time_ids = add_time_ids.to(device).repeat(batch_size * num_images_per_prompt, 1)
 
-            # 处理classifier-free guidance
-            if do_classifier_free_guidance:
-                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+    num_warmup_steps = max(len(timesteps) - num_inference_steps * pipe.scheduler.order, 0)
 
-            # 使用scheduler.step进行去噪
-            latents = pipe.scheduler.step(noise_pred, t[0].long(), latents, **extra_step_kwargs, return_dict=False)[0]
+    for i, t in enumerate(timesteps):
+        latent_model_input = latents
+        latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, t)
 
-            if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % pipe.scheduler.order == 0):
-                progress_bar.update()
+        added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+
+        noise_pred = pipe.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep_cond=None,
+                        cross_attention_kwargs=None,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+
+        latents_dtype = latents.dtype
+        
+        latents = pipe.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+    needs_upcasting = True
+    if needs_upcasting:
+        pipe.upcast_vae()
+        latents = latents.to(next(iter(pipe.vae.post_quant_conv.parameters())).dtype)
+    elif latents.dtype != pipe.vae.dtype:
+        if torch.backends.mps.is_available():
+            pipe.vae = pipe.vae.to(latents.dtype)
 
     return latents
 
 to_pil_image = ToPILImage()
 model_name = 'facebook/dinov2-base'
-# dinov2_model = AutoModel.from_pretrained(model_name)
 dinov2_transforms = transforms.Compose([
     transforms.Resize(size=224, interpolation=transforms.InterpolationMode.BICUBIC),
     transforms.CenterCrop(size=(224, 224)),
@@ -291,7 +272,7 @@ def creative_reward_fn():
         sim1 = sim(f_good, f1)
         sim2 = sim(f_good, f2)
         
-        reward = (sim1 + sim2) - torch.abs(sim1 - sim2) * 8 # sim2 * 10 # sim1 + sim2 - torch.abs(sim1 - sim2) 
+        reward = (sim1 + sim2)  - torch.abs(sim1 - sim2) * 5
         
         return reward, sim1, sim2
 
@@ -342,28 +323,26 @@ class PolicyNet(nn.Module):
         x = x.view(x.size(0), -1)
         mu = self.mu_layer(x)
         log_std = self.log_std_layer(x)
-        std = torch.exp(log_std * 0.01)
+        std = torch.exp(log_std * 0.1)
         dist = Normal(mu, std)
         action = dist.rsample()
         log_prob = dist.log_prob(action).sum(dim=-1)
         return action, log_prob, dist
 
 
-def ppo_update(actor, actor_optimizer, states, actions_raw, logp_old, rewards, clip_eps=0.2, epochs=1, device="cuda:0", csv_writer=None):
+def ppo_update(actor, actor_optimizer, states, actions_raw, logp_old, rewards, clip_eps=0.2, epochs=1, device="cuda:0", csv_writer=None, save_path_prefix=None):
 
-    states = states.to(device) 
-    actions_raw = actions_raw.to(device) 
+    states = states.to(device)
+    actions_raw = actions_raw.to(device)
     logp_old = logp_old.to(device)
-    rewards = rewards.to(device) 
+    rewards = rewards.to(device)
 
     print(f"Collected Actions (before update): Mean={actions_raw.mean().item():.8f} (after sigmoid), Std={actions_raw.std().item():.8f} (after sigmoid)")
     print(f"Rewards: Mean={rewards.mean().item():.8f}, Std={rewards.std().item():.8f}")
 
-    # Normalizing rewards is often helpful in RL
-    # adv = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
     adv = rewards
 
-    for _ in range(epochs): # Loop over epochs
+    for _ in range(epochs):
         action_pred, logp_new_raw, dist_new = actor(states)
         logp = dist_new.log_prob(actions_raw).sum(dim=-1)
         ratio = torch.exp(torch.clamp(logp - logp_old, -10., 10.))
@@ -374,12 +353,6 @@ def ppo_update(actor, actor_optimizer, states, actions_raw, logp_old, rewards, c
 
         actor_optimizer.zero_grad()
         actor_loss.backward()
-
-        # Print gradients after backward pass
-        for name, param in actor.named_parameters():
-            if param.grad is not None:
-                print(f"Gradient for {name}: Mean={param.grad.mean().item():.8f}, Std={param.grad.std().item():.8f}")
-
         actor_optimizer.step()
 
     if csv_writer is not None:
@@ -388,44 +361,50 @@ def ppo_update(actor, actor_optimizer, states, actions_raw, logp_old, rewards, c
         rewards_mean = rewards.mean().item()
         rewards_std = rewards.std().item()
         csv_writer.writerow([actions_mean, actions_std, rewards_mean, rewards_std])
+        
+    if hasattr(ppo_update, 'update_count'):
+        ppo_update.update_count += 1
+    else:
+        ppo_update.update_count = 1
+        
+    if save_path_prefix:
+        torch.save(actor.state_dict(), f"{save_path_prefix}policy_weights_update_{ppo_update.update_count}.pt")
 
 torch.manual_seed(42)
 inference_dtype = torch.float16
 device1 = "cuda:0"
 device2 = "cuda:1"
-pipeline = StableDiffusionPipeline.from_pretrained(SD21_MODEL_PATH, revision="main", torch_dtype=torch.float16)
+pipeline = StableDiffusionXLPipeline.from_pretrained(SDXL_TURBO_MODEL_PATH, revision="main", torch_dtype=torch.float16)
 
 pipeline.vae.requires_grad_(False)
 pipeline.text_encoder.requires_grad_(False)
-# pipeline.text_encoder_2.requires_grad_(False)
+pipeline.text_encoder_2.requires_grad_(False)
 pipeline.unet.requires_grad_(False)
 
 pipeline.vae.to(device2, dtype=inference_dtype)
 pipeline.text_encoder.to(device2, dtype=inference_dtype)
-# pipeline.text_encoder_2.to(device2, dtype=inference_dtype)
+pipeline.text_encoder_2.to(device2, dtype=inference_dtype)
 pipeline.unet.to(device2, dtype=inference_dtype)    
 pipeline.to(device2)
 
-pipeline.safety_checker = None  
+pipeline.safety_checker = None
 
 def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
-    # 用 float16 训练，防止 float16 溢出
-    actor = PolicyNet(embedding_dim=1024, hidden_dim=1024*2).to(dtype=inference_dtype, device=device1)
+    actor = PolicyNet(embedding_dim=2048, hidden_dim=2048*2).to(dtype=inference_dtype, device=device1)
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=3e-6, eps=1e-4)
 
-    # Create CSV file and writerupdate_interval
     csv_file = open(file_path + 'training_log.csv', 'w', newline='')
     csv_writer = csv.writer(csv_file)
     csv_writer.writerow(['actions_mean', 'actions_std', 'rewards_mean', 'rewards_std'])
 
     reward_fn = creative_reward_fn()
 
-    states_buffer = [] # Will store fused prompt embeddings
-    actions_raw_buffer = [] # Will store unbounded sampled actions
-    log_probs_old_buffer = [] # Will store log probs of unbounded actions under old policy
-    rewards_buffer = [] # Will store rewards
+    states_buffer = []
+    actions_raw_buffer = []
+    log_probs_old_buffer = []
+    rewards_buffer = []
 
-    max_steps = 128 # 256
+    max_steps = 128
     update_interval = 16
 
     image1 = Image.open(DATASET_DIR / prompts1_ / "output_0.png")
@@ -434,16 +413,15 @@ def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
     f2 = get_image_features_clip(image2).to(device1)
     t1, t2 = get_text_features(prompts1, prompts2)
 
-    # SD1.4不需要c12, c22，因为encode_prompt只返回一个值
-    c11, c21 = None, None
+    c11, c12, c21, c22 = None, None, None, None
     with torch.no_grad():
-        # Get embeddings on device2 first - SD1.4 encode_prompt only returns one value
-        c11_dev2, _ = pipeline.encode_prompt(prompt=prompts1, num_images_per_prompt=1, do_classifier_free_guidance=False, device=device2)
-        c21_dev2, _ = pipeline.encode_prompt(prompt=prompts2, num_images_per_prompt=1, do_classifier_free_guidance=False, device=device2)
+        c11_dev2, _, c12_dev2, _ = pipeline.encode_prompt(prompt=prompts1, num_images_per_prompt=1, do_classifier_free_guidance=False, device=device2)
+        c21_dev2, _, c22_dev2, _ = pipeline.encode_prompt(prompt=prompts2, num_images_per_prompt=1, do_classifier_free_guidance=False, device=device2)
 
-        # Move embeddings to device1 for actor input
         c11_dev1 = c11_dev2.to(device1)
         c21_dev1 = c21_dev2.to(device1)
+        c12_dev1 = c12_dev2.to(device1)
+        c22_dev1 = c22_dev2.to(device1)
 
     current_state = c11_dev1 * 0.5 + c21_dev1 * 0.5
 
@@ -454,9 +432,9 @@ def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
         with torch.no_grad():
             action_raw, log_prob_raw, dist = actor(current_state)
 
-        states_buffer.append(current_state.cpu()) # Store state (fused embedding)
-        actions_raw_buffer.append(action_raw.cpu()) # Store the unbounded action sample
-        log_probs_old_buffer.append(log_prob_raw.cpu()) # Store log prob of the unbounded action sample
+        states_buffer.append(current_state.cpu())
+        actions_raw_buffer.append(action_raw.cpu())
+        log_probs_old_buffer.append(log_prob_raw.cpu())
 
         action_for_mixing = action_raw.unsqueeze(1).expand(-1, 77, -1)
 
@@ -465,35 +443,11 @@ def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
         action_for_mixing_dev2 = action_for_mixing.to(device2, dtype=inference_dtype)
 
         prompt_embeds_for_diffusion = c11_dev2 * action_for_mixing_dev2 + c21_dev2 * (1 - action_for_mixing_dev2)
+        pooled_prompt_embeds_for_diffusion = (c12_dev1 * 0.5 + c22_dev1 * 0.5).to(device2, dtype=inference_dtype)
 
-        latent0 = self_pipe(latents, pipeline, device=device2, prompt_embeds=prompt_embeds_for_diffusion, guidance_scale=7.5)
-        
-        # 添加调试信息
-        print(f"Latent0 shape: {latent0.shape}, dtype: {latent0.dtype}")
-        print(f"Latent0 stats - min: {latent0.min().item():.4f}, max: {latent0.max().item():.4f}, mean: {latent0.mean().item():.4f}, std: {latent0.std().item():.4f}")
-        print(f"VAE scaling_factor: {pipeline.vae.config.scaling_factor}")
-        print(f"Guidance scale: 7.5")
-        print(f"Using classifier-free guidance: True")
-        
-        # 对于SD1.4，使用正确的VAE解码方式
-        with torch.no_grad():
-            # 使用正确的scaling_factor
-            image_tensor = pipeline.vae.decode(latent0.to(pipeline.vae.dtype) / pipeline.vae.config.scaling_factor, return_dict=False)[0]
-            
-            # 处理safety_checker（如果存在）
-            if pipeline.safety_checker is not None:
-                image_tensor, has_nsfw_concept = pipeline.run_safety_checker(image_tensor, device2, prompt_embeds_for_diffusion.dtype)
-            else:
-                has_nsfw_concept = None
-        
-        # 将图像tensor移动到device1进行后处理
-        image_tensor = image_tensor.to(device1)
-        
-        print(f"Image tensor shape: {image_tensor.shape}, dtype: {image_tensor.dtype}")
-        print(f"Image tensor stats - min: {image_tensor.min().item():.4f}, max: {image_tensor.max().item():.4f}, mean: {image_tensor.mean().item():.4f}, std: {image_tensor.std().item():.4f}")
-        
-        # 使用标准的SD1.4后处理方式
-        image_good = pipeline.image_processor.postprocess(image_tensor, output_type="pil", do_denormalize=[True] * image_tensor.shape[0])[0]
+        latent0 = self_pipe(latents, pipeline, device=device2, prompt_embeds=prompt_embeds_for_diffusion, pooled_prompt_embeds=pooled_prompt_embeds_for_diffusion)
+        image_tensor = pipeline.vae.decode(latent0 / pipeline.vae.config.scaling_factor)[0].to(device1)
+        image_good = xl_postprocess(image_tensor)[0]
         im0 = image_good.copy()
 
         reward, sim1, sim2 = reward_fn(image_good, f1, f2, t1, t2)
@@ -502,17 +456,16 @@ def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
         current_state = prompt_embeds_for_diffusion.detach().to(device1)
 
         print(f"\nStep {step+1}: Reward={reward.item():.4f}, Sim1={sim1.item():.4f}, Sim2={sim2.item():.4f}")
-        im0.save(file_path + f"{step+1:04d}_{reward.item():.4f}_{sim1.item():.4f}_{sim2.item():.4f}.png") # Added padding to step number
+        im0.save(file_path + f"{step+1:04d}_{reward.item():.4f}_{sim1.item():.4f}_{sim2.item():.4f}.png")
 
         if len(rewards_buffer) >= update_interval:
             print(f"\nPerforming PPO update after {len(rewards_buffer)} steps...")
-            # Stack collected data into tensors
-            states_batch = torch.stack(states_buffer) # Shape [update_interval, 77, 768]
-            actions_raw_batch = torch.stack(actions_raw_buffer) # Shape [update_interval, 768]
-            log_probs_old_batch = torch.stack(log_probs_old_buffer) # Shape [update_interval]
-            rewards_batch = torch.stack(rewards_buffer) # Shape [update_interval]
+            states_batch = torch.stack(states_buffer)
+            actions_raw_batch = torch.stack(actions_raw_buffer)
+            log_probs_old_batch = torch.stack(log_probs_old_buffer)
+            rewards_batch = torch.stack(rewards_buffer)
 
-            # Perform the PPO update
+
             ppo_update(
                 actor,
                 actor_optimizer,
@@ -520,18 +473,17 @@ def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
                 actions_raw_batch,
                 log_probs_old_batch,
                 rewards_batch,
-                device=device1, # PPO update happens on device1
-                csv_writer=csv_writer
+                device=device1,
+                csv_writer=csv_writer,
+                save_path_prefix=file_path
             )
 
-            # Clear the buffers after update
             states_buffer = []
             actions_raw_buffer = []
             log_probs_old_buffer = []
             rewards_buffer = []
             print("PPO update complete. Buffers cleared.")
 
-    # Perform a final update with any remaining samples in the buffer
     if len(rewards_buffer) > 0:
          print(f"\nPerforming final PPO update with {len(rewards_buffer)} remaining steps...")
          states_batch = torch.stack(states_buffer)
@@ -547,61 +499,46 @@ def main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_):
              log_probs_old_batch,
              rewards_batch,
              device=device1,
-             csv_writer=csv_writer
+             csv_writer=csv_writer,
+             save_path_prefix=file_path
          )
          print("Final PPO update complete.")
 
 
-    torch.cuda.empty_cache() # Clear CUDA cache after the run
+    torch.cuda.empty_cache()
     csv_file.close()
 
 if __name__ == "__main__":
     dataset_path = DATASET_DIR
-    floder_path = OUTPUT_DIR / "res_ppo_0804_abo" / "sd-v2-1"
-    prompt_file_path = PROMPT_FILE
+    floder_path = OUTPUT_DIR / "res_ppo_522_seg" / "2-baseloss-save"
+    folders = [folder for folder in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, folder))]
 
-    # 读取 prompt 组合列表
-    with open(prompt_file_path, "r") as f:
-        prompt_pairs = [line.strip() for line in f if "&" in line]
-
-    # 迭代所有组合
-
-    count = 0
-    for pair in prompt_pairs:
-        count += 1
-        prompts1_, prompts2_ = pair.split("&")
-        prompts1 = "A photo of one full-body " + prompts1_
-        prompts2 = "A photo of one full-body " + prompts2_
-
+    list1 = ["zebra", "frog", "owl", "dinosaur", "giraffe", "cat", "zebra", "giraffe", "cauliflower", "komodo dragon"]
+    list2 = ["rabbit", "cauliflower", "tiger", "strawberry", "snail", "armadillo", "rabbit", "cock", "eagle", "howler monkey"]
+    
+    for i in range(1):
+        prompts1_, prompts2_ = random.sample(folders, 2)
+        prompts1_ = list1[i]
+        prompts2_ = list2[i]
+        prompts1 = "A photo of a full-body " + prompts1_
+        prompts2 = "A photo of a full-body " + prompts2_
+        
         if os.path.exists(floder_path / f"{prompts1_}&{prompts2_}"):
             continue
-
-        # 创建保存目录
+        
         os.makedirs(floder_path, exist_ok=True)
         os.makedirs(floder_path / f"{prompts1_}&{prompts2_}", exist_ok=True)
         file_path = str(floder_path / f"{prompts1_}&{prompts2_}") + os.sep
 
-        # 生成 latent 向量
         latents = pipeline.prepare_latents(
-            batch_size=1,
-            num_channels_latents=4,
-            height=512,
-            width=512,
+            1,
+            4,
+            512,
+            512,
             dtype=inference_dtype,
             device=device2,
             generator=None,
             latents=None,
         )
         
-        # 确保latents是随机噪声
-        latents = torch.randn(
-            (1, 4, 64, 64),
-            device=device2,
-            dtype=inference_dtype
-        )
-
-        # 执行主生成逻辑
         main(latents, file_path, prompts1, prompts2, prompts1_, prompts2_)
-
-        if count >= 10:
-            break

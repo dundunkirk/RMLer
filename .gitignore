@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local model checkpoints and generated artifacts
+checkpoints/
+outputs/
+dataset/
+
+# Common experiment outputs
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
