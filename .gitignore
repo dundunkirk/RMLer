@@ -5,7 +5,11 @@ __pycache__/
 # Local model checkpoints and generated artifacts
 checkpoints/
 outputs/
-dataset/
+dataset/*
+!dataset/american black bear/
+!dataset/american black bear/*.png
+!dataset/angora/
+!dataset/angora/*.png
 
 # Common experiment outputs
 *.pt

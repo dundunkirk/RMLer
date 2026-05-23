@@ -156,6 +156,8 @@ dataset/
     `-- output_0.png
 ```
 
+This branch includes a small example dataset under `dataset/american black bear/` and `dataset/angora/`.
+
 You can create this layout automatically with:
 
 ```bash
