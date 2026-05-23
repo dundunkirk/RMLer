@@ -1,0 +1,200 @@
+african hunting dog&indian elephant
+american black bear&indian elephant 
+arabian camel&indian elephant 
+arctic fox&indian elephant 
+armadillo&indian elephant
+angora&indian elephant  
+american black bear&macaque
+angora&meerkat
+arabian camel&ostrich
+arabian camel&owl
+arctic fox&sea lion
+arctic fox&turtle
+armadillo&corgi
+armadillo&marmot
+armadillo&squirrel monkey
+black-footed ferret&indian elephant 
+indri&lizard 
+lizard&eagle 
+lizard&frog 
+timber wolf&cock
+black-footed ferret&brown bear
+black-footed ferret&tusker
+broccoli&bulldog
+broccoli&pineapple
+broccoli&squirrel monkey
+bulldog&polecat
+bulldog&venom
+cat&orangutan
+cat&three-toed sloth
+cat&wallaby
+cauliflower&hummingbird
+cauliflower&octopus
+cheetah&gazelle
+cheetah&macaque
+cheetah&proboscis monkey
+cheetah&skunk
+chimpanzee&broccoli
+chimpanzee&brown bear
+chimpanzee&llama
+cock&hamster
+colobus&dingo
+colobus&red wolf
+colobus&turtle
+corgi&kangaroo
+corgi&porcupine
+cougar&hummingbird
+cougar&tusker
+cougar&wood rabbit
+coyote&cauliflower
+coyote&sea lion
+crocodile&lizard
+crocodile&venom
+cuckoo&hog
+cuckoo&meerkat
+cuckoo&sloth bear
+dingo&armadillo
+dinosaur&polecat
+dinosaur&sloth
+dugong&komodo dragon
+dugong&siamang
+eagle&marmot
+eagle&meerkat
+eagle&snail
+eagle&venom
+elephant&jaguar
+elephant&snail
+elephant&venom
+fish&three-toed sloth
+fish&venom
+fox squirrel&venom
+frog&timber wolf
+frog&venom
+gazelle&siamang
+gazelle&snow leopard
+gazelle&three-toed sloth
+gibbon&coyote
+gibbon&meerkat
+gibbon&three-toed sloth
+gibbon&weasel
+gibbon&white wolf
+giraffe&american black bear
+giraffe&crocodile
+giraffe&dinosaur
+giraffe&tiger
+hartebeest&Indian elephant
+hartebeest&crocodile
+hartebeest&impala
+hippopotamus&dugong
+hippopotamus&white wolf
+hog&hyena
+hog&macaque
+hog&venom
+howler monkey&lesser panda
+howler monkey&orangutan
+hummingbird&hyena
+hummingbird&impala
+hummingbird&meerkat
+hummingbird&owl
+hyena&giant panda
+hyena&orangutan
+ice bear&eagle
+ice bear&hyena
+ice bear&lizard
+ice bear&squirrel
+ice bear&wild boar
+impala&gibbon
+impala&three-toed sloth
+indri&cat
+indri&proboscis monkey
+kangaroo&howler monkey
+kangaroo&venom
+killer whale&gibbon
+killer whale&owl
+kit fox&elephant
+kit fox&timber wolf
+koala&meerkat
+koala&platypus
+komodo dragon&bulldog
+komodo dragon&koala
+langur&african hunting dog
+langur&dugong
+langur&elephant
+langur&penguin
+lesser panda&hummingbird
+lesser panda&ibex
+lion&hartebeest
+lion&venom
+lizard&american black bear
+lizard&giant panda
+llama&brown bear
+llama&platypus
+macaque&gazelle
+marmot&platypus
+meerkat&american black bear
+meerkat&lizard
+mouse&owl
+mouse&sloth bear
+octopus&rabbit
+octopus&three-toed sloth
+octopus&venom
+orangutan&ibex
+orangutan&platypus
+ostrich&timber wolf
+owl&snail
+ox&crocodile
+ox&skunk
+penguin&hog
+penguin&venom
+platypus&white shark
+polecat&platypus
+polecat&wombat
+porcupine&water buffalo
+proboscis monkey&white shark
+rabbit&brown bear
+rabbit&indri
+sea lion&chimpanzee
+sea lion&penguin
+sea lion&squirrel monkey
+siamang&dingo
+siamang&skunk
+skunk&kit fox
+sloth bear&frog
+sloth bear&venom
+sloth&snow leopard
+snail&american black bear
+snail&cougar
+snail&ice bear
+snail&komodo dragon
+snail&water buffalo
+snow leopard&fox squirrel
+squirrel&proboscis monkey
+strawberry&hummingbird
+strawberry&snail
+three-toed sloth&penguin
+tiger&cougar
+timber wolf&colobus
+timber wolf&gorilla
+timber wolf&jaguar
+timber wolf&snow leopard
+turtle&venom
+tusker&american black bear
+tusker&ox
+venom&rabbit
+wallaby&rabbit
+wallaby&snail
+warthog&cock
+warthog&elephant
+weasel&armadillo
+weasel&kit fox
+weasel&snail
+white shark&lesser panda
+white shark&llama
+white wolf&arctic fox
+white wolf&proboscis monkey
+wild boar&killer whale
+wild boar&octopus
+zebra&giant panda
+zebra&mouse
+zebra&orangutan
+zebra&squirrel monkey
